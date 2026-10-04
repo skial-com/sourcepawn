@@ -1180,6 +1180,14 @@ CodeGenerator::BoundLval CodeGenerator::BindLval(ir::Lvalue* lval, bool simple_a
 }
 
 void CodeGenerator::EmitStringExpr(ir::String* expr) {
+    if (auto type = expr->type()->as<ArrayType>(); type && type->is_flat()) {
+        auto temp_slot = AcquireTempSlot(expr, type);
+        __ emit(OP_ADDR_S, VarSlot(temp_slot));
+        __ emit(OP_DUP);
+        EmitArrayCtor(type, expr, 0);
+        return;
+    }
+
     auto text = expr->parent()->text();
     uint16_t index = rtti_->AddString(text, &data_);
     __ emit(OP_LOAD_STR, VarSlot(index));

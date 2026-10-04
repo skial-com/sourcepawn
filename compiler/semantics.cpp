@@ -1770,7 +1770,14 @@ ir::Value* Semantics::CheckStringExpr(StringExpr* expr, Type* target) {
         }
     }
 
-    QualType type = types_->defineArray(types_->type_char(), (cell)expr->text()->length() + 1);
+    // A flat target (eg a sized array parameter) needs its own flat copy of
+    // the literal; passing the shared literal would hand the callee a heap
+    // object where it expects flat storage.
+    QualType type;
+    if (arr && arr->is_flat() && arr->inner()->isChar())
+        type = types_->defineFlatArray(types_->type_char(), arr->size());
+    else
+        type = types_->defineArray(types_->type_char(), (cell)expr->text()->length() + 1);
     return new ir::String(expr, type);
 }
 
