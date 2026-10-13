@@ -424,6 +424,64 @@ static cell_t CallWithFlatString(IPluginContext* cx, const cell_t* params) {
   return rval;
 }
 
+// Mimics an extension that pushes a 3-cell buffer with copyback but claims 12
+// cells (sizeof instead of a count). The callback's sized parameter only holds
+// 3, so only those may be copied back. Copies the first 3 cells to |out| and
+// returns how many of the 9 guard cells after them are intact.
+static cell_t CallWithCopybackArray(IPluginContext* cx, const cell_t* params) {
+  auto fn = cx->GetFunctionById(params[1]);
+  if (!fn)
+    return cx->ThrowNativeError("Could not find function");
+
+  static const cell_t kGuard = 0x5a5a5a5a;
+  cell_t buffer[12] = {1, 2, 3};
+  for (size_t i = 3; i < 12; i++)
+    buffer[i] = kGuard;
+
+  CallArgs args;
+  args.PushArray(buffer, 12, SM_PARAM_COPYBACK);
+
+  cell_t rval;
+  if (!fn->Invoke(args, &rval))
+    return 0;
+
+  cell_t* out;
+  cx->LocalToPhysAddr(params[2], &out);
+  for (size_t i = 0; i < 3; i++)
+    out[i] = buffer[i];
+
+  cell_t intact = 0;
+  for (size_t i = 3; i < 12; i++)
+    intact += (buffer[i] == kGuard);
+  return intact;
+}
+
+// Same as above for a string: a 64-byte buffer passed to a char[8] parameter.
+// Copies the string back to |out| and returns how many of bytes 8..63 are intact.
+static cell_t CallWithCopybackString(IPluginContext* cx, const cell_t* params) {
+  auto fn = cx->GetFunctionById(params[1]);
+  if (!fn)
+    return cx->ThrowNativeError("Could not find function");
+
+  char buffer[64];
+  memset(buffer, 'Z', sizeof(buffer));
+  strcpy(buffer, "abc");
+
+  CallArgs args;
+  args.PushString(buffer, sizeof(buffer), SM_PARAM_STRING_COPY | SM_PARAM_COPYBACK);
+
+  cell_t rval;
+  if (!fn->Invoke(args, &rval))
+    return 0;
+
+  cx->StringToLocal(params[2], 8, buffer);
+
+  cell_t intact = 0;
+  for (size_t i = 8; i < sizeof(buffer); i++)
+    intact += (buffer[i] == 'Z');
+  return intact;
+}
+
 // Invokes |fn| with 11 arguments, even though its callback type declares 6,
 // mimicking a callback attached to a wider forward (e.g. OnPlayerRunCmd).
 static cell_t CallWithExtraArgs(IPluginContext* cx, const cell_t* params) {
@@ -777,6 +835,8 @@ static int Execute(const char* file)
   BindNative(rt.get(), "call_with_flat_array", CallWithFlatArray);
   BindNative(rt.get(), "call_with_flat_string", CallWithFlatString);
   BindNative(rt.get(), "call_with_extra_args", CallWithExtraArgs);
+  BindNative(rt.get(), "call_with_copyback_array", CallWithCopybackArray);
+  BindNative(rt.get(), "call_with_copyback_string", CallWithCopybackString);
   BindNative(rt.get(), "test_local_to_array_ptr", TestLocalToArrayPtr);
 
   BindNative(rt.get(), "assert_eq", AssertEq);

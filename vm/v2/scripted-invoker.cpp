@@ -115,7 +115,15 @@ bool ScriptedInvoker::Invoke(const CallArgs& args, cell_t* result) {
 
     std::vector<Handle<SpArray>> retained_arrays;
 
-    std::array<std::pair<void*, uint32_t>, SP_MAX_EXEC_PARAMS> cows;
+    // Copy-on-write-back arguments. |nbytes| is how much of an array was copied
+    // in; only that much is copied back, since a flat (sized) parameter can be
+    // smaller than the caller's buffer and its storage ends there.
+    struct CopyBack {
+        void* addr;
+        uint32_t index;
+        uint32_t nbytes;
+    };
+    std::array<CopyBack, SP_MAX_EXEC_PARAMS> cows;
     uint32_t ncows = 0;
 
     const auto& expected_arg_types = method_->arg_types();
@@ -131,6 +139,7 @@ bool ScriptedInvoker::Invoke(const CallArgs& args, cell_t* result) {
         }
 
         void* addr = nullptr;
+        uint32_t copyback_bytes = 0;
         switch (arg.type) {
             case CallArgs::ARG_CELL_BY_REF: {
                 params[i] = env->sp();
@@ -165,6 +174,7 @@ bool ScriptedInvoker::Invoke(const CallArgs& args, cell_t* result) {
                     uint32_t nbytes =
                         std::min<size_t>(arg.array_size * sizeof(cell_t), flat_bytes);
                     memcpy(addr, arg.u.addr, nbytes);
+                    copyback_bytes = nbytes;
                 } else {
                     auto elt_type = env->types()->GetPrimitive(TypeKind::Int32);
                     auto type = env->types()->GetArray(elt_type);
@@ -174,6 +184,7 @@ bool ScriptedInvoker::Invoke(const CallArgs& args, cell_t* result) {
 
                     addr = context_->heap().ToPhysAddr<void*>(array->data);
                     memcpy(addr, arg.u.addr, arg.array_size * sizeof(cell_t));
+                    copyback_bytes = arg.array_size * sizeof(cell_t);
 
                     params[i] = context_->heap().ToLocalAddr(array.get());
                     retained_arrays.emplace_back(std::move(array));
@@ -210,6 +221,7 @@ bool ScriptedInvoker::Invoke(const CallArgs& args, cell_t* result) {
                     params[i] = context_->heap().ToLocalAddr(array.get());
                     retained_arrays.emplace_back(std::move(array));
                 }
+                copyback_bytes = nbytes;
 
                 if (arg.flags & SM_PARAM_STRING_COPY) {
                     cell_t dest = context_->heap().ToLocalAddr(addr);
@@ -235,7 +247,7 @@ bool ScriptedInvoker::Invoke(const CallArgs& args, cell_t* result) {
         }
 
         if (arg.flags & SM_PARAM_COPYBACK)
-            cows[ncows++] = std::pair<void*, uint32_t>{addr, i};
+            cows[ncows++] = CopyBack{addr, i, copyback_bytes};
     }
 
     {
@@ -251,8 +263,8 @@ bool ScriptedInvoker::Invoke(const CallArgs& args, cell_t* result) {
     assert(!env->hasPendingException());
 
     for (uint32_t i = 0; i < ncows; i++) {
-        void* src = cows[i].first;
-        const auto& arg = args.argv[cows[i].second];
+        void* src = cows[i].addr;
+        const auto& arg = args.argv[cows[i].index];
 
         switch (arg.type) {
             case CallArgs::ARG_CELL_BY_REF:
@@ -262,10 +274,8 @@ bool ScriptedInvoker::Invoke(const CallArgs& args, cell_t* result) {
                 *reinterpret_cast<int64_t*>(arg.u.addr) = *reinterpret_cast<int64_t*>(src);
                 break;
             case CallArgs::ARG_ARRAY:
-                memcpy(arg.u.addr, src, arg.array_size * sizeof(cell_t));
-                break;
             case CallArgs::ARG_CHAR_ARRAY:
-                memcpy(arg.u.addr, src, arg.array_size);
+                memcpy(arg.u.addr, src, cows[i].nbytes);
                 break;
             default:
                 assert(false);
