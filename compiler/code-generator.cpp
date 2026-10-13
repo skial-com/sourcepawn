@@ -1290,6 +1290,11 @@ void CodeGenerator::EmitBinary(ir::Binary* expr, unsigned int flags) {
                 __ emit(OP_DUP);
 
             EmitRvalue(left, left_binding);
+
+            // `any_var *= 2.0`: semantics picked a float operator, but the loaded
+            // value is still typed as a cell in the VM.
+            if (right->type()->isFloat() && IsBitcastableCell(left_type))
+                EmitRetag(expr, right->type());
         }
     } else {
         EmitExpr(left);
@@ -2777,8 +2782,31 @@ void CodeGenerator::EmitCastExpr(ir::Value* expr, ir::Value* from, unsigned int 
             // -> int8: truncate any wider integer (or char) to the low 8 bits
             // and sign-extend. Only reachable via an explicit view_as<int8>().
             __ emit(OP_CVT_I8);
+        } else if ((to->isFloat() && IsBitcastableCell(from_type)) ||
+                   (from_type->isFloat() &&
+                    (to->isInt() || to->isAny() || to->isEnumOrMethodmap())))
+        {
+            // Retag (Float:x, view_as<float>(x)): same bits, but the VM must see the
+            // new type, or the arithmetic and comparisons around it run as the wrong
+            // kind (integer vs float) of op.
+            EmitRetag(expr, to);
         }
     }
+}
+
+// The v2 VM types stack values by where they came from and picks integer or float
+// math from those types. Passing the value through a temp slot of the target type
+// changes its type without changing its bits, and works on VMs of any version.
+void CodeGenerator::EmitRetag(ir::Value* node, Type* to) {
+    auto slot = AcquireTempSlot(node, to);
+    __ emit(OP_STOR_S, VarSlot(slot));
+    __ emit(OP_LOAD_S, VarSlot(slot));
+}
+
+// 32-bit non-float scalars the VM types as int32 (enums and methodmaps included) or any.
+bool CodeGenerator::IsBitcastableCell(Type* type) {
+    return type->isInt() || type->isAny() || type->isBool() || type->isChar() ||
+           type->isInt8() || type->isInt16() || type->isEnumOrMethodmap();
 }
 
 void CodeGenerator::EmitArraySize(ir::ArraySize* expr) {

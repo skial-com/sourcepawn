@@ -110,6 +110,8 @@ class CodeGenerator final
     void EmitNewArrayExpr(ir::NewArray* expr);
     void EmitSimpleCastExpr(ir::SimpleCast* expr);
     void EmitCastExpr(ir::Value* expr, ir::Value* from, unsigned int flags);
+    static bool IsBitcastableCell(Type* type);
+    void EmitRetag(ir::Value* node, Type* to);
     void EmitRvalue(ir::Rvalue* expr);
     void EmitRvalueFromLvalue(ir::Lvalue* expr);
     void EmitAsRvalue(ir::Value* expr);

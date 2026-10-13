@@ -229,6 +229,7 @@ class Semantics final
     bool AddImplicitDynamicInitializer(VarDeclBase* decl);
     ir::Value* BuildConversion(ir::Value* from, ConversionKind ck, Type* to);
     ir::Value* BuildConversion(ir::Value* from, const Conversion& cv);
+    ir::Value* RetagFloatOperand(ir::Value* from, const Conversion& cv);
     ir::Value* CheckRvalue(Expr* expr, Type* target = nullptr, uint32_t flags = 0);
     ir::Value* BuildSimpleCast(ir::Value* from, BuiltinType type);
     ir::Value* CoerceNull(ir::Value* expr, Type* formal);

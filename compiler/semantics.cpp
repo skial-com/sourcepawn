@@ -1015,6 +1015,9 @@ ir::Value* Semantics::CheckBinaryExprImpl(BinaryExprState& state) {
             state.right = BuildConversion(state.right, op->right);
         if (!op->left.IsNop() && !IsAssignOp(token))
             state.left = BuildConversion(state.left, op->left);
+        state.right = RetagFloatOperand(state.right, op->right);
+        if (!IsAssignOp(token))
+            state.left = RetagFloatOperand(state.left, op->left);
 
         if (IsCompare(token))
             assign_type = types_->type_bool();
@@ -1226,6 +1229,9 @@ ir::Value* Semantics::CheckChainedCompareExpr(ChainedCompareExpr* chain) {
             op.expr = BuildConversion(op.expr, binop->right);
         if (is_first && !binop->left.IsNop())
             first = BuildConversion(first, binop->left);
+        op.expr = RetagFloatOperand(op.expr, binop->right);
+        if (is_first)
+            first = RetagFloatOperand(first, binop->left);
 
         if (!right->is(IrKind::Constant) || !right->type()->isInt())
             all_const = false;
@@ -3618,6 +3624,23 @@ ir::Value* Semantics::BuildSimpleCast(ir::Value* from, BuiltinType type) {
     }
 
     return new ir::SimpleCast(from->pn(), from, to);
+}
+
+// The VM picks float or integer math from the operand types, so a non-float cell
+// (any, int, enum...) used as a float operand must be retagged explicitly, or
+// `f * any_value` runs as an integer multiply.
+ir::Value* Semantics::RetagFloatOperand(ir::Value* from, const Conversion& cv) {
+    if (!IsNopConversion(cv.ck) || !cv.type || !cv.type->isFloat())
+        return from;
+    Type* type = from->type();
+    if (type->isFloat())
+        return from;
+    if (!(type->isInt() || type->isAny() || type->isBool() || type->isChar() ||
+          type->isInt8() || type->isInt16() || type->isEnumOrMethodmap()))
+    {
+        return from;
+    }
+    return new ir::Cast(from->pn(), from, cv.type);
 }
 
 ir::Value* Semantics::BuildConversion(ir::Value* from, const Conversion& cv) {
