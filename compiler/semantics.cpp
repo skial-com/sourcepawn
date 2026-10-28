@@ -1352,9 +1352,18 @@ ir::Value* Semantics::CheckTernaryExpr(TernaryExpr* expr, Type* target) {
             return nullptr;
         }
 
-        if (use_left_to_right)
+        if (use_left_to_right) {
             second = BuildConversion(second, left_to_right, *right);
-        else
+
+            // A width change (int -> int64, float -> double) gives the
+            // result a new storage size, so it must take the converted type.
+            // Other conversions keep the left type, as they always have.
+            if (left_to_right == ConversionKind::Numeric &&
+                (*left)->isWideType() != (*right)->isWideType())
+            {
+                out_type = second->qual_type();
+            }
+        } else
             third = BuildConversion(third, right_to_left, *left);
 
         auto ck = use_left_to_right ? left_to_right : right_to_left;
