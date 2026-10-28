@@ -2782,13 +2782,12 @@ void CodeGenerator::EmitCastExpr(ir::Value* expr, ir::Value* from, unsigned int 
             // -> int8: truncate any wider integer (or char) to the low 8 bits
             // and sign-extend. Only reachable via an explicit view_as<int8>().
             __ emit(OP_CVT_I8);
-        } else if ((to->isFloat() && IsBitcastableCell(from_type)) ||
-                   (from_type->isFloat() &&
-                    (to->isInt() || to->isAny() || to->isEnumOrMethodmap())))
+        } else if (to->isFloat() != from_type->isFloat() ||
+                   to->isDouble() != from_type->isDouble())
         {
-            // Retag (Float:x, view_as<float>(x)): same bits, but the VM must see the
-            // new type, or the arithmetic and comparisons around it run as the wrong
-            // kind (integer vs float) of op.
+            // Retag (Float:x, view_as<float>(x), view_as<double>(i64)): same bits,
+            // but the VM must see the new type, or the arithmetic and comparisons
+            // around it run as the wrong kind (integer vs float) of op.
             EmitRetag(expr, to);
         }
     }
