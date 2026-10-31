@@ -1180,9 +1180,20 @@ CodeGenerator::BoundLval CodeGenerator::BindLval(ir::Lvalue* lval, bool simple_a
 }
 
 void CodeGenerator::EmitStringExpr(ir::String* expr) {
-    auto text = expr->parent()->text();
-    uint16_t index = rtti_->AddString(text, &data_);
-    __ emit(OP_LOAD_STR, VarSlot(index));
+    auto dest_type = expr->type()->to<ArrayType>();
+    if (dest_type->is_flat()) {
+        auto slot = AcquireTempSlot(expr, dest_type);
+        __ emit(OP_ADDR_S, VarSlot(slot));
+        __ emit(OP_DUP);
+        EmitArrayCtor(dest_type, expr, EMIT_REPEATABLE);
+    } else if (!expr->qual_type().is_const()) {
+        EmitArrayCtor(dest_type, expr, EMIT_REPEATABLE);
+    } else {
+        // Best case: immutable fixed array.
+        auto text = expr->parent()->text();
+        uint16_t index = rtti_->AddString(text, &data_);
+        __ emit(OP_LOAD_STR, VarSlot(index));
+    }
 }
 
 void CodeGenerator::EmitIncDec(ir::IncDec* expr, unsigned int flags) {
@@ -1715,13 +1726,12 @@ void CodeGenerator::EmitCallExpr(ir::Call* call, unsigned int flags) {
         bool needs_temp = false;
         if (!arg) {
             // Legacy variadic arguments.
-            if (auto* var = expr->as<ir::Variable>()) {
-                /* treat a "const" variable passed to a function with a non-const
-                 * "variable argument list" as a constant here */
-                if (!type->isComposite() && var->decl()->is_const() && !arg.is_const())
-                    needs_temp = true;
-            } else if (!expr->lvalue()) {
+            if (!expr->lvalue()) {
                 needs_temp = !type->isComposite();
+            } else if (!type->isComposite() && expr->qual_type().is_const()) {
+                /* treat a "const" value passed to a function with a non-const
+                 * "variable argument list" as a constant here */
+                needs_temp = true;
             }
 
             if (binding) {
@@ -2722,7 +2732,7 @@ void CodeGenerator::EmitSimpleCastExpr(ir::SimpleCast* expr) {
         assert(from_type->isIntN() || from_type->isAny());
         __ emit(OP_CVT_I64);
     } else if (to_type->isIntPtr()) {
-        assert(from_type->isInt() || from_type->isAny() || from_type->isInt64());
+        assert(from_type->isIntN() || from_type->isAny());
         __ emit(OP_CVT_INTPTR);
     } else if (to_type->isDouble()) {
         __ emit(OP_CVT_F64);
@@ -2761,24 +2771,16 @@ void CodeGenerator::EmitCastExpr(ir::Value* expr, ir::Value* from, unsigned int 
         // Wide int -> int32: truncate.
         if ((to->isInt() || to->isAny()) && from_type->isWideInt()) {
             __ emit(OP_CVT_I32);
-        } else if (to->isInt64() &&
-                   (from_type->isIntN() || from_type->isAny()))
-        {
+        } else if (to->isInt64() && (from_type->isIntN() || from_type->isAny())) {
             // -> int64: from int, any, intptr, or int16.
             __ emit(OP_CVT_I64);
-        } else if (to->isIntPtr() &&
-                   (from_type->isInt() || from_type->isAny() || from_type->isInt64()))
-        {
+        } else if (to->isIntPtr() && (from_type->isIntN() || from_type->isAny())) {
             __ emit(OP_CVT_INTPTR);
-        } else if (to->isInt16() &&
-                   (from_type->isInt() || from_type->isWideInt() || from_type->isAny()))
-        {
+        } else if (to->isInt16() && (from_type->coercesToInt() || from_type->isWideInt())) {
             // -> int16: truncate any wider integer to the low 16 bits and
             // sign-extend. Only reachable via an explicit view_as<int16>().
             __ emit(OP_CVT_I16);
-        } else if (to->isInt8() &&
-                   (from_type->isIntN() || from_type->isChar() || from_type->isAny()))
-        {
+        } else if (to->isInt8() && (from_type->coercesToInt() || from_type->isWideInt())) {
             // -> int8: truncate any wider integer (or char) to the low 8 bits
             // and sign-extend. Only reachable via an explicit view_as<int8>().
             __ emit(OP_CVT_I8);

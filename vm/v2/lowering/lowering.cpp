@@ -1911,10 +1911,10 @@ void MethodLowerer::LowerCall(uint32_t method_index, std::optional<uint8_t> argc
         // functions are flat too, so heap arrays passed to them (2D array rows,
         // string literals) must be aliased as flat storage as well.
         uint32_t sig_index = ctor_type ? i + 1 : i;
-        bool flat_param = sig_index < expected_argc &&
-                          sig->args()[sig_index]->kind() == TypeKind::FlatArray;
+        bool formal_is_flat = sig_index < sig->args().size() &&
+                              sig->args()[sig_index]->IsFlatArray();
         if (node->type->IsNonFlatArray() &&
-            (is_native || flat_param || (package_varargs && i >= expected_argc)))
+            (is_native || formal_is_flat || (package_varargs && i >= expected_argc)))
         {
             VReg dest = AllocateTempCells(1, false);
             emit(LL_ARRAY_TO_FLAT, arg_reg, dest);
